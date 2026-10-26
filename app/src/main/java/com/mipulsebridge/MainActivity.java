@@ -257,6 +257,7 @@ public class MainActivity extends Activity {
         boolean enabled = prefs.isServiceEnabled();
         int bpm = prefs.getLastBpm();
         int devices = prefs.getConnectedDevices();
+        String advertise = prefs.getAdvertiseStatus();
 
         btnToggle.setText(enabled ? "停止广播服务" : "启动广播服务");
         btnToggle.setOnClickListener(v -> toggleService(enabled));
@@ -266,9 +267,9 @@ public class MainActivity extends Activity {
                 ? devices + " 台设备连接中(Keep / 码表)"
                 : "等待 Keep 扫描连接…");
 
-        tvStatus.setText("状态:服务 " + (enabled ? "运行中" : "未启动")
-                + " · 最新心率来源:"
-                + (bpm == 123 ? "手动测试" : "hook 推送 / 未知"));
+        tvStatus.setText("服务 " + (enabled ? "运行中" : "未启动")
+                + " · 广告: " + (advertise.isEmpty() ? "未知(启动后刷新)" : advertise)
+                + " · 心率来源: " + (bpm == 123 ? "手动测试" : "hook 推送 / 未知"));
     }
 
     private void toggleService(boolean currentlyEnabled) {

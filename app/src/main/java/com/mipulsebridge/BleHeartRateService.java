@@ -53,6 +53,8 @@ public class BleHeartRateService extends Service {
     static final UUID UUID_HR_SERVICE = UUID.fromString("0000180d-0000-1000-8000-00805f9b34fb");
     static final UUID UUID_HR_MEASUREMENT = UUID.fromString("00002a37-0000-1000-8000-00805f9b34fb");
     static final UUID UUID_BODY_SENSOR_LOCATION = UUID.fromString("00002a38-0000-1000-8000-00805f9b34fb");
+    /** Client Characteristic Configuration Descriptor:客户端订阅通知的开关 */
+    static final UUID UUID_CCCD = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb");
 
     private static final String CHANNEL_ID = "mipulsebridge_channel";
     private static final int NOTIFICATION_ID = 1001;
@@ -131,6 +133,7 @@ public class BleHeartRateService extends Service {
         BluetoothAdapter adapter = bluetoothManager != null ? bluetoothManager.getAdapter() : null;
         if (adapter == null || !adapter.isEnabled()) {
             Log.w(TAG, "蓝牙不可用或未开启");
+            new Prefs(getApplicationContext()).setAdvertiseStatus("蓝牙未开启");
             updateNotification(Prefs.BPM_UNKNOWN, 0, "蓝牙未开启");
             return;
         }
@@ -151,11 +154,16 @@ public class BleHeartRateService extends Service {
         BluetoothGattService hrService = new BluetoothGattService(
                 UUID_HR_SERVICE, BluetoothGattService.SERVICE_TYPE_PRIMARY);
 
-        // Heart Rate Measurement:0x2A37,支持 READ + NOTIFY
+        // Heart Rate Measurement:0x2A37,支持 READ + NOTIFY,必须带 CCCD 描述符(0x2902)
+        // 客户端(Keep)通过写 CCCD 订阅通知,没有 CCCD 就无法接收实时心率
         BluetoothGattCharacteristic hrMeasurement = new BluetoothGattCharacteristic(
                 UUID_HR_MEASUREMENT,
                 BluetoothGattCharacteristic.PROPERTY_READ | BluetoothGattCharacteristic.PROPERTY_NOTIFY,
                 BluetoothGattCharacteristic.PERMISSION_READ);
+        BluetoothGattDescriptor cccd = new BluetoothGattDescriptor(
+                UUID_CCCD,
+                BluetoothGattDescriptor.PERMISSION_READ | BluetoothGattDescriptor.PERMISSION_WRITE);
+        hrMeasurement.addDescriptor(cccd);
         hrService.addCharacteristic(hrMeasurement);
 
         // Body Sensor Location:0x2A38,固定值 1 = Chest(让部分 App 校验通过)
@@ -224,11 +232,15 @@ public class BleHeartRateService extends Service {
         @Override
         public void onStartSuccess(AdvertiseSettings settingsInEffect) {
             Log.i(TAG, "BLE 广播已开始");
+            new Prefs(getApplicationContext()).setAdvertiseStatus("广告中(Keep 应可扫到)");
+            notifyUi();
         }
 
         @Override
         public void onStartFailure(int errorCode) {
-            Log.w(TAG, "BLE 广播失败,errorCode=" + errorCode + "(不影响 GATT 连接)");
+            Log.w(TAG, "BLE 广播失败,errorCode=" + errorCode + "(Keep 将无法扫描到设备)");
+            new Prefs(getApplicationContext()).setAdvertiseStatus("广告失败 errorCode=" + errorCode);
+            notifyUi();
         }
     };
 
@@ -278,6 +290,28 @@ public class BleHeartRateService extends Service {
                 Log.w(TAG, "心率通知发送失败,status=" + status + " device=" + device.getAddress());
             }
         }
+
+        @Override
+        public void onDescriptorWriteRequest(BluetoothDevice device, int requestId,
+                                             BluetoothGattDescriptor descriptor, boolean preparedWrite,
+                                             boolean responseNeeded, int offset, byte[] value) {
+            if (gattServer == null) {
+                return;
+            }
+            if (responseNeeded) {
+                try {
+                    gattServer.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, value);
+                } catch (SecurityException e) {
+                    Log.w(TAG, "onDescriptorWriteRequest 响应失败(权限)", e);
+                    return;
+                }
+            }
+            if (UUID_CCCD.equals(descriptor.getUuid())) {
+                // value 低字节 bit0 = 1 表示客户端订阅了通知
+                boolean subscribed = value != null && value.length >= 2 && (value[0] & 0x01) != 0;
+                Log.i(TAG, "客户端 " + device.getAddress() + (subscribed ? " 订阅了通知" : " 取消订阅"));
+            }
+        }
     };
 
     // ----------------------------------------------------------------------------------
@@ -319,7 +353,8 @@ public class BleHeartRateService extends Service {
                     return;
                 }
                 try {
-                    gattServer.notifyCharacteristicChanged(device, hr, true, value);
+                    // confirm=false → 标准 Notification(心率带惯例);true 是 Indication,Keep 不认
+                    gattServer.notifyCharacteristicChanged(device, hr, false, value);
                 } catch (SecurityException e) {
                     Log.w(TAG, "notify 权限异常", e);
                 }

@@ -15,6 +15,7 @@ public final class Prefs {
     private static final String KEY_DEVICE_NAME = "device_name";
     private static final String KEY_LAST_BPM = "last_bpm";
     private static final String KEY_CONNECTED_DEVICES = "connected_devices";
+    private static final String KEY_ADVERTISE_STATUS = "advertise_status";
 
     public static final String DEFAULT_DEVICE_NAME = "MiPulseBridge HR";
     public static final int BPM_UNKNOWN = -1;
@@ -55,5 +56,14 @@ public final class Prefs {
 
     public void setConnectedDevices(int count) {
         sp.edit().putInt(KEY_CONNECTED_DEVICES, count).apply();
+    }
+
+    /** 广告(advertise)状态文本:"" 表示未知 */
+    public String getAdvertiseStatus() {
+        return sp.getString(KEY_ADVERTISE_STATUS, "");
+    }
+
+    public void setAdvertiseStatus(String status) {
+        sp.edit().putString(KEY_ADVERTISE_STATUS, status).apply();
     }
 }
