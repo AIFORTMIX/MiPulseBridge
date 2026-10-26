@@ -18,6 +18,17 @@
         android:allowBackup="false"
         android:supportsRtl="true">
 
+        <!-- Xposed 模块声明:框架据此在模块列表中识别本应用 -->
+        <meta-data
+            android:name="xposedmodule"
+            android:value="true" />
+        <meta-data
+            android:name="xposeddescription"
+            android:value="把小米运动健康里的手环实时心率广播为标准 BLE 心率服务(Keep 等可连接)" />
+        <meta-data
+            android:name="xposedminversion"
+            android:value="82" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true">
