@@ -30,6 +30,12 @@ jobs:
           find "$ANDROID_SDK_ROOT/platforms" -maxdepth 1 -type d 2>/dev/null | sort
           yes | sdkmanager "platforms;android-34" "build-tools;34.0.0" > /dev/null 2>&1 || true
 
+      - name: Diagnose BluetoothAdapter API
+        run: |
+          ANDROID_JAR="$ANDROID_SDK_ROOT/platforms/android-34/android.jar"
+          echo "jar: $ANDROID_JAR ($(stat -c%s "$ANDROID_JAR" 2>/dev/null) bytes)"
+          javap -classpath "$ANDROID_JAR" android.bluetooth.BluetoothAdapter 2>&1 | grep -iE "gatt" || echo "未找到 gatt 相关方法"
+
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon
 

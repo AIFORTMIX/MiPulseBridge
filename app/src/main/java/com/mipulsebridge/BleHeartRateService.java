@@ -136,10 +136,10 @@ public class BleHeartRateService extends Service {
         }
 
         try {
-            gattServer = adapter.openGattServer(this, gattServerCallback);
-        } catch (SecurityException e) {
-            Log.e(TAG, "openGattServer 被拒绝(权限)", e);
-            updateNotification(Prefs.BPM_UNKNOWN, 0, "蓝牙权限被拒");
+            gattServer = openGattServerReflect(adapter);
+        } catch (Exception e) {
+            Log.e(TAG, "openGattServer 反射调用失败(权限或 API 兼容)", e);
+            updateNotification(Prefs.BPM_UNKNOWN, 0, "GATT 打开失败");
             return;
         }
         if (gattServer == null) {
@@ -351,6 +351,17 @@ public class BleHeartRateService extends Service {
                     == PackageManager.PERMISSION_GRANTED;
         }
         return true;
+    }
+
+    /**
+     * 反射调用 BluetoothAdapter#openGattServer(Context, BluetoothGattServerCallback)。
+     * 该方法自 API 18 起存在且签名稳定,反射可绕开个别编译环境的符号解析问题;
+     * 运行时若因权限(S+)被拒会抛 SecurityException,由调用方处理。
+     */
+    private BluetoothGattServer openGattServerReflect(BluetoothAdapter adapter) throws Exception {
+        java.lang.reflect.Method m = BluetoothAdapter.class.getMethod(
+                "openGattServer", Context.class, BluetoothGattServerCallback.class);
+        return (BluetoothGattServer) m.invoke(adapter, this, gattServerCallback);
     }
 
     // ----------------------------------------------------------------------------------
