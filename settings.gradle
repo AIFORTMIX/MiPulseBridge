@@ -11,6 +11,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // Xposed API(compileOnly de.robv.android.xposed:api:82)
+        maven { url 'https://api.xposed.info/' }
     }
 }
 
