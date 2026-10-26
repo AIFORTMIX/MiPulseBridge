@@ -1,0 +1,14 @@
+{
+  "targetPackage": "com.mi.health",
+  "rules": [
+    {
+      "description": "占位规则:需按你的小米运动健康版本用 jadx 逆向后填写,详见 README「逆向 Hook 点」章节",
+      "className": "com.mi.health.sport.SportDataServer",
+      "methodName": "onHeartRate",
+      "paramTypes": ["int"],
+      "valueFrom": "param:0",
+      "minBpm": 30,
+      "maxBpm": 250
+    }
+  ]
+}
