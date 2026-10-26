@@ -54,8 +54,38 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         prefs = new Prefs(this);
         buildUi();
+        syncRulesToPrefs();
         requestNeededPermissions();
         refreshStatus();
+    }
+
+    /**
+     * 把 assets/hook_rules.json 同步到 SharedPreferences(hook_rules/rules_json),
+     * 并让文件对 hook 进程(小米运动健康)可读。
+     * Hook 侧用标准 Xposed API 的 XSharedPreferences 跨进程读取规则。
+     */
+    private void syncRulesToPrefs() {
+        try (java.io.InputStream in = getAssets().open("hook_rules.json")) {
+            java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+            byte[] tmp = new byte[4096];
+            int n;
+            while ((n = in.read(tmp)) != -1) {
+                buf.write(tmp, 0, n);
+            }
+            String content = new String(buf.toByteArray(), java.nio.charset.StandardCharsets.UTF_8);
+            getSharedPreferences("hook_rules", MODE_PRIVATE)
+                    .edit()
+                    .putString("rules_json", content)
+                    .commit(); // commit 立即落盘,hook 进程才能读到
+
+            // 让文件对其他 uid 可读(owner 可自行修改自己的文件权限位,无需 root)
+            java.io.File f = new java.io.File(getFilesDir().getParent() + "/shared_prefs/hook_rules.xml");
+            if (f.exists()) {
+                f.setReadable(true, false);
+            }
+        } catch (Exception e) {
+            toast("同步 hook 规则失败:" + e.getMessage());
+        }
     }
 
     @Override

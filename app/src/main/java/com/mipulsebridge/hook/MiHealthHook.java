@@ -1,13 +1,8 @@
 package com.mipulsebridge.hook;
 
-import android.content.res.AssetManager;
-import android.util.Log;
-
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -18,16 +13,18 @@ import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
- * MiPulseBridge 的 LSPosed 入口。
+ * MiPulseBridge 的 LSPosed / Xposed 入口。
  *
  * 运行在被 Hook 进程(小米运动健康)内:
- * 1. 从本模块 APK 的 assets/hook_rules.json 读取 hook 规则;
+ * 1. 从模块同步的 SharedPreferences(见 RuleStore)读取 hook 规则;
  * 2. 按规则 hook 心率相关方法;
  * 3. 把提取到的实时 BPM 通过 HrSender 推送到本模块进程的 BLE 广播服务。
  *
  * 规则文件采用「规则驱动」设计:小米运动健康每个版本类名可能不同,
- * 用 jadx 逆向后把新的类名/方法名写进 hook_rules.json 即可,无需改代码。
+ * 用 jadx 逆向后把新的类名/方法名写进 assets/hook_rules.json 即可,无需改代码。
  * 具体逆向步骤见 README「逆向 Hook 点」章节。
+ *
+ * 注意:仅依赖标准 Xposed API(api.xposed.info 的 api:82),兼容原版 Xposed 与 LSPosed。
  */
 public class MiHealthHook implements IXposedHookLoadPackage {
 
@@ -36,15 +33,18 @@ public class MiHealthHook implements IXposedHookLoadPackage {
     /** 默认目标包名,可被 hook_rules.json 中的 targetPackage 覆盖 */
     private static final String DEFAULT_TARGET_PACKAGE = "com.mi.health";
 
+    /** hook 方法参数数量上限(心率回调不可能超过 6 个参数,超出则跳过) */
+    private static final int MAX_PARAM_COUNT = 6;
+
     @Override
     public void handleLoadPackage(final XC_LoadPackage.LoadPackageParam lpparam) {
         if (!shouldHandle(lpparam)) {
             return;
         }
 
-        List<HookRule> rules = loadRules(lpparam);
+        List<HookRule> rules = loadRules();
         if (rules.isEmpty()) {
-            XposedBridge.log(TAG + ":hook_rules.json 无有效规则,已跳过 hook");
+            XposedBridge.log(TAG + ":无有效 hook 规则(请先打开 MiPulseBridge App 完成规则同步)");
             return;
         }
 
@@ -59,31 +59,23 @@ public class MiHealthHook implements IXposedHookLoadPackage {
     }
 
     private boolean shouldHandle(XC_LoadPackage.LoadPackageParam lpparam) {
-        // 优先按规则文件里的 targetPackage 匹配,兜底用默认包名
         String target = DEFAULT_TARGET_PACKAGE;
-        try (InputStream in = openModuleAsset(lpparam, "hook_rules.json")) {
-            if (in != null) {
-                String content = readAll(in);
-                JSONObject root = new JSONObject(content);
-                String pkg = root.optString("targetPackage", "");
-                if (pkg.length() > 0) {
-                    target = pkg;
-                }
+        try {
+            JSONObject root = new JSONObject(RuleStore.readRulesJson());
+            String pkg = root.optString("targetPackage", "");
+            if (pkg.length() > 0) {
+                target = pkg;
             }
         } catch (Exception e) {
-            XposedBridge.log(TAG + ":读取 targetPackage 失败,使用默认 " + target);
+            // 规则未同步或解析失败,使用默认包名
         }
         return lpparam.packageName != null && lpparam.packageName.equals(target);
     }
 
-    private List<HookRule> loadRules(XC_LoadPackage.LoadPackageParam lpparam) {
+    private List<HookRule> loadRules() {
         List<HookRule> rules = new ArrayList<>();
-        try (InputStream in = openModuleAsset(lpparam, "hook_rules.json")) {
-            if (in == null) {
-                return rules;
-            }
-            String content = readAll(in);
-            JSONObject root = new JSONObject(content);
+        try {
+            JSONObject root = new JSONObject(RuleStore.readRulesJson());
             JSONArray arr = root.optJSONArray("rules");
             if (arr != null) {
                 for (int i = 0; i < arr.length(); i++) {
@@ -94,33 +86,9 @@ public class MiHealthHook implements IXposedHookLoadPackage {
                 }
             }
         } catch (Exception e) {
-            XposedBridge.log(TAG + ":读取规则失败 " + e.getMessage());
+            XposedBridge.log(TAG + ":解析 hook 规则失败 " + e.getMessage());
         }
         return rules;
-    }
-
-    /**
-     * 打开本模块 APK 的 assets 文件。
-     * LSPosed 提供 moduleContext,其 AssetManager 即模块自身资源。
-     */
-    private InputStream openModuleAsset(XC_LoadPackage.LoadPackageParam lpparam, String assetName) {
-        try {
-            AssetManager am = (AssetManager) lpparam.moduleContext.getAssets();
-            return am.open(assetName);
-        } catch (Exception e) {
-            XposedBridge.log(TAG + ":打开模块资源失败 " + assetName + " " + e.getMessage());
-            return null;
-        }
-    }
-
-    private String readAll(InputStream in) throws Exception {
-        java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
-        byte[] tmp = new byte[4096];
-        int n;
-        while ((n = in.read(tmp)) != -1) {
-            buf.write(tmp, 0, n);
-        }
-        return new String(buf.toByteArray(), StandardCharsets.UTF_8);
     }
 
     private boolean hookRule(XC_LoadPackage.LoadPackageParam lpparam, HookRule rule) {
@@ -130,6 +98,11 @@ public class MiHealthHook implements IXposedHookLoadPackage {
         } catch (ClassNotFoundException e) {
             XposedBridge.log(TAG + ":规则参数类型无法解析 " + rule.className + "." + rule.methodName
                     + " -> " + e.getMessage());
+            return false;
+        }
+        if (paramClasses.length > MAX_PARAM_COUNT) {
+            XposedBridge.log(TAG + ":跳过超过 " + MAX_PARAM_COUNT + " 个参数的方法 "
+                    + rule.className + "." + rule.methodName);
             return false;
         }
 
@@ -144,17 +117,43 @@ public class MiHealthHook implements IXposedHookLoadPackage {
         };
 
         try {
-            // 用 List 动态构造,避免「无参方法」时固定数组越位/覆盖 methodName
-            List<Object> args = new ArrayList<>();
-            args.add(rule.className);
-            args.add(lpparam.classLoader);
-            args.add(rule.methodName);
-            for (Class<?> c : paramClasses) {
-                args.add(c);
+            // 类型化展开调用,避免 Object[] 无法匹配 findAndHookMethod 重载
+            switch (paramClasses.length) {
+                case 0:
+                    XposedHelpers.findAndHookMethod(rule.className, lpparam.classLoader,
+                            rule.methodName, hook);
+                    break;
+                case 1:
+                    XposedHelpers.findAndHookMethod(rule.className, lpparam.classLoader,
+                            rule.methodName, paramClasses[0], hook);
+                    break;
+                case 2:
+                    XposedHelpers.findAndHookMethod(rule.className, lpparam.classLoader,
+                            rule.methodName, paramClasses[0], paramClasses[1], hook);
+                    break;
+                case 3:
+                    XposedHelpers.findAndHookMethod(rule.className, lpparam.classLoader,
+                            rule.methodName, paramClasses[0], paramClasses[1], paramClasses[2], hook);
+                    break;
+                case 4:
+                    XposedHelpers.findAndHookMethod(rule.className, lpparam.classLoader,
+                            rule.methodName, paramClasses[0], paramClasses[1], paramClasses[2],
+                            paramClasses[3], hook);
+                    break;
+                case 5:
+                    XposedHelpers.findAndHookMethod(rule.className, lpparam.classLoader,
+                            rule.methodName, paramClasses[0], paramClasses[1], paramClasses[2],
+                            paramClasses[3], paramClasses[4], hook);
+                    break;
+                case 6:
+                    XposedHelpers.findAndHookMethod(rule.className, lpparam.classLoader,
+                            rule.methodName, paramClasses[0], paramClasses[1], paramClasses[2],
+                            paramClasses[3], paramClasses[4], paramClasses[5], hook);
+                    break;
+                default:
+                    XposedBridge.log(TAG + ":不支持的参数数量 " + paramClasses.length);
+                    return false;
             }
-            args.add(hook);
-
-            XposedHelpers.findAndHookMethod(args.toArray());
             XposedBridge.log(TAG + ":已 hook " + rule.className + "." + rule.methodName
                     + " valueFrom=" + rule.valueFrom);
             return true;
